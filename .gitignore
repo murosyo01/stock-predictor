@@ -1,0 +1,10 @@
+data/raw/
+data/features/
+data/backtest_results.csv
+models/
+mlruns/
+__pycache__/
+*.pyc
+*.db
+.env
+.DS_Store
