@@ -243,6 +243,28 @@ def main() -> None:
         print("\n=== Model Comparison (averaged across tickers) ===")
         print(summary.to_string(float_format="{:.4f}".format))
 
+        # 複合信頼度スコア: sharpeを最重視しつつaccuracy・precisionを加味し、drawdownをペナルティとする
+        reliability_df = summary.reset_index().copy()
+        reliability_df["reliability_score"] = (
+            reliability_df["sharpe"] * 0.4
+            + reliability_df["accuracy"] * 0.3
+            + reliability_df["precision"] * 0.2
+            - reliability_df["max_drawdown"].abs() * 0.1
+        )
+        reliability_df = reliability_df.sort_values("reliability_score", ascending=False)
+        reliability_df.insert(0, "rank", range(1, len(reliability_df) + 1))
+        reliability_df = reliability_df[
+            ["rank", "model", "reliability_score", "sharpe", "accuracy", "precision",
+             "max_drawdown", "total_return"]
+        ]
+
+        ranking_path = ROOT / "data" / "model_reliability_ranking.csv"
+        reliability_df.to_csv(ranking_path, index=False)
+        logger.info(f"Model reliability ranking saved → {ranking_path}")
+
+        print("\n=== Model Reliability Ranking ===")
+        print(reliability_df.to_string(index=False, float_format="{:.4f}".format))
+
     print("\n=== LightGBM Backtest Summary (per ticker) ===")
     print(results_df.to_string(index=False))
 
