@@ -8,6 +8,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -20,6 +21,51 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 EXCLUDE_COLS = {"ticker", "target", "future_return", "open", "high", "low", "close", "volume"}
+
+BACKTEST_PATH = ROOT / "data" / "backtest_by_model.csv"
+REQUIRED_BACKTEST_COLS = {"model", "ticker", "accuracy", "precision", "sharpe", "max_drawdown"}
+
+
+def load_model_weights(model_names: list[str]) -> dict[str, float]:
+    """バックテスト結果からモデルの重みを計算して返す。ファイル不在・列不足時は等重み。"""
+    equal = {m: 1.0 / len(model_names) for m in model_names}
+
+    if not BACKTEST_PATH.exists():
+        logger.warning("Backtest results not found, using equal weights")
+        return equal
+
+    try:
+        bt = pd.read_csv(BACKTEST_PATH)
+    except Exception as e:
+        logger.warning(f"Failed to read backtest file: {e}, using equal weights")
+        return equal
+
+    if not REQUIRED_BACKTEST_COLS.issubset(bt.columns):
+        missing = REQUIRED_BACKTEST_COLS - set(bt.columns)
+        logger.warning(f"Backtest file missing columns {missing}, using equal weights")
+        return equal
+
+    scores = (
+        bt.groupby("model")[["sharpe", "accuracy", "precision", "max_drawdown"]]
+        .mean()
+    )
+    scores["reliability_score"] = (
+        scores["sharpe"] * 0.4
+        + scores["accuracy"] * 0.3
+        + scores["precision"] * 0.2
+        - scores["max_drawdown"].abs() * 0.1
+    )
+
+    weights: dict[str, float] = {}
+    for m in model_names:
+        if m in scores.index:
+            weights[m] = max(float(scores.loc[m, "reliability_score"]), 0.01)
+        else:
+            weights[m] = 0.01
+
+    total = sum(weights.values())
+    weights = {m: w / total for m, w in weights.items()}
+    return weights
 
 
 def load_config() -> dict:
@@ -132,6 +178,15 @@ def main() -> None:
     # --- DL モデル ---
     dl_wrappers = build_dl_models(cfg, n_features)
 
+    # モデル名リストを確定し重みを計算する
+    model_names = []
+    if lgbm_model is not None:
+        model_names.append("lgbm")
+    model_names.extend(dl_wrappers.keys())
+
+    weights = load_model_weights(model_names)
+    logger.info("Using weights: " + " ".join(f"{m}={weights[m]:.4f}" for m in model_names))
+
     results = []
     for ticker in cfg["tickers"]:
         path = feat_dir / f"{ticker}.parquet"
@@ -147,25 +202,31 @@ def main() -> None:
         }
 
         probs = []
+        prob_weights = []
 
         if lgbm_model is not None:
             X = df.tail(1)[lgbm_feature_cols].fillna(0)
             prob = float(lgbm_model.predict_proba(X)[0, 1])
             row["lgbm_prob"] = round(prob, 4)
             probs.append(prob)
+            prob_weights.append(weights["lgbm"])
 
+        import math
         for name, wrapper in dl_wrappers.items():
-            # wrapper に保存済みの feature_cols を使い不一致を防ぐ
             dl_cols = wrapper.feature_cols if wrapper.feature_cols else feature_cols
             prob = wrapper.predict_latest(df, dl_cols)
-            import math
             if math.isfinite(prob):
                 row[f"{name}_prob"] = round(prob, 4)
                 probs.append(prob)
+                prob_weights.append(weights[name])
             else:
                 row[f"{name}_prob"] = None
 
-        ensemble = sum(probs) / len(probs) if probs else float("nan")
+        if probs:
+            w_sum = sum(prob_weights)
+            ensemble = sum(p * w for p, w in zip(probs, prob_weights)) / w_sum
+        else:
+            ensemble = float("nan")
         row["ensemble_prob"] = round(ensemble, 4)
         row["signal"] = "BUY" if ensemble >= 0.5 else "HOLD"
 
