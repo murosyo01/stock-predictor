@@ -1,7 +1,7 @@
 data/raw/
 data/features/
 data/backtest_results.csv
-models/
+/models/
 mlruns/
 __pycache__/
 *.pyc
