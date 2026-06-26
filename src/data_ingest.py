@@ -13,6 +13,20 @@ import yfinance as yf
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+
+def _make_yf_session():
+    try:
+        from curl_cffi.requests.session import Session as CurlSession
+        return CurlSession(impersonate="chrome116")
+    except Exception:
+        import requests
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"})
+        return s
+
+
+_YF_SESSION = _make_yf_session()
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -26,7 +40,7 @@ def load_config() -> dict:
 
 def download_ticker(ticker: str, start: str) -> pd.DataFrame:
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=_YF_SESSION)
         df = t.history(start=start, auto_adjust=True)
         if df.empty:
             logger.warning(f"No data returned for {ticker}")
