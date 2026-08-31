@@ -99,10 +99,14 @@ def load_dl_model(name: str, model_dir: Path, model_obj, seq_len: int):
 
 
 def build_dl_models(cfg: dict, n_features: int) -> dict:
-    from models.lstm_model import LSTMClassifier
-    from models.tcn_model import TCNClassifier
-    from models.patchtst_model import PatchTSTClassifier
-    from models.tft_model import TFTClassifier
+    try:
+        from models.lstm_model import LSTMClassifier
+        from models.tcn_model import TCNClassifier
+        from models.patchtst_model import PatchTSTClassifier
+        from models.tft_model import TFTClassifier
+    except ImportError:
+        logger.warning("DL モデルのインポートに失敗。DL モデルをスキップします。")
+        return {}
 
     seq_len = cfg["dl_model"]["seq_len"]
     model_dir = ROOT / cfg["model"]["model_dir"]
